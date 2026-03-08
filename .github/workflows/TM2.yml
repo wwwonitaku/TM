@@ -1,0 +1,271 @@
+name: Thuyết Minh (Nam)
+on:
+  workflow_dispatch:
+    inputs:
+      link: { description: "Link", required: true }
+      slug: { description: "Slug", required: true }
+      token: { description: 'Token', required: true }
+      page: { description: 'Page', required: true }
+      account: { description: 'AID', required: true }
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Environment
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg curl jq unzip python3 python3-pip
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -U yt-dlp webvtt-py requests edge-tts
+      - name: Download Video & Subtitle
+        run: |
+          yt-dlp \
+            --hls-prefer-native \
+            --concurrent-fragments 5 \
+            --retries infinite \
+            --fragment-retries infinite \
+            -o "raw_video.mp4" \
+            "${{ github.event.inputs.link }}"
+         
+          # Tải phụ đề Việt
+          curl -L "https://vicdn.cc/vtt/${{ github.event.inputs.slug }}-vi.vtt" -o vi.vtt
+      - name: Filter Music from Subtitle
+        run: |
+          python3 -c '
+          import webvtt
+          import os
+          if os.path.exists("vi.vtt"):
+              vtt = webvtt.read("vi.vtt")
+              vtt.captions =[c for c in vtt if "♪" not in c.text]
+              vtt.save("vi.vtt")
+              print(f"Filtered VTT: remaining {len(vtt.captions)} captions.")
+          '
+      - name: TTS Generation (From Downloaded Sub)
+        run: |
+          python3 <<'EOF'
+          import webvtt, os, re, asyncio, edge_tts, subprocess
+          MAX_CONCURRENT_TTS = 5
+          def normalize_for_tts(text):
+              text = text.lower()
+              text = re.sub(r'<[^>]+>', '', text)
+              text = re.sub(r'\s+', ' ', text).strip()
+              text = text.replace('"', '')
+              text = text.replace('[', '')
+              text = text.replace(']', '')
+              text = text.replace(",", ", ").replace(".", ". ")
+              if not text.endswith((".", "!", "?", "...")): text += "."
+              return text
+          async def generate_tts(text, out, idx, semaphore):
+              async with semaphore:
+                  try:
+                      tts_text = normalize_for_tts(text)
+                      if not tts_text or tts_text == ".":
+                          raise Exception("Empty text")
+                      tts = edge_tts.Communicate(tts_text, voice="vi-VN-NamMinhNeural", rate="+27%")
+                      await tts.save(out)
+                      # Trim silence - Quan trọng để không bị lệch timeline
+                      tmp_out = out + ".tmp.mp3"
+                      subprocess.run(["ffmpeg", "-y", "-i", out, "-af", "silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:stop_periods=-1:stop_threshold=-50dB:stop_duration=0", tmp_out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                      os.rename(tmp_out, out)
+                  except:
+                      subprocess.run(["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=24000:cl=mono","-t","0.1",out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+          async def main():
+            if not os.path.exists("vi.vtt"):
+                print("Missing vi.vtt"); return
+           
+            vtt = webvtt.read("vi.vtt")
+            os.makedirs("chunks", exist_ok=True)
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TTS)
+            tasks =[]
+           
+            for i, c in enumerate(vtt):
+                tasks.append(generate_tts(c.text, f"chunks/c_{i}.mp3", i, semaphore))
+           
+            await asyncio.gather(*tasks)
+            with open("count.txt", "w") as f: f.write(str(len(vtt)))
+            print(f"[DONE] Generated {len(vtt)} TTS chunks")
+          asyncio.run(main())
+          EOF
+      - name: Build Audio Batches & Filter (Chia nhỏ 300 sub/lần)
+        run: |
+          # Lấy thông số kỹ thuật của video gốc
+          VIDEO_DURATION=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 raw_video.mp4)
+          AUDIO_RATE=$(ffprobe -v error -select_streams a:0 -show_entries stream=sample_rate -of default=noprint_wrappers=1:nokey=1 raw_video.mp4)
+          # Fallback nếu không đọc được audio rate
+          if [ -z "$AUDIO_RATE" ]; then AUDIO_RATE=44100; fi
+          echo "audio_rate=$AUDIO_RATE" >> $GITHUB_ENV
+          
+          export VIDEO_DURATION=$VIDEO_DURATION
+          export AUDIO_RATE=$AUDIO_RATE
+
+          python3 <<'EOF'
+          import webvtt, os, subprocess, math
+          def to_ms(time_str):
+              h, m, s = time_str.replace(',', '.').split(':')
+              return int(float(h)*3600000 + float(m)*60000 + float(s)*1000)
+          def get_duration(file):
+              cmd =["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file]
+              return float(subprocess.check_output(cmd))
+          
+          vtt = webvtt.read("vi.vtt")
+          audio_rate = int(os.environ.get('AUDIO_RATE', 44100))
+          video_duration_ms = int(float(os.environ.get('VIDEO_DURATION', 0)) * 1000)
+          
+          BATCH_SIZE = 300
+          total_subs = len(vtt)
+          num_batches = math.ceil(total_subs / BATCH_SIZE)
+
+          # BƯỚC 1: XỬ LÝ THEO MẺ 300 SUB (GIỮ NGUYÊN CODE CHUẨN CỦA BẠN)
+          for b in range(num_batches):
+              start_idx = b * BATCH_SIZE
+              end_idx = min((b + 1) * BATCH_SIZE, total_subs)
+              batch_vtt = vtt[start_idx:end_idx]
+
+              filters =[]
+              mix_labels = ""
+              inputs_args =[]
+
+              for i_local, c in enumerate(batch_vtt):
+                  i_global = start_idx + i_local
+                  start_ms = to_ms(c.start)
+                  
+                  # CÁCH KHẮC PHỤC 1: Đổi delay từ mili-giây sang Samples (Mẫu)
+                  delay_samples = int(((start_ms + 400) * audio_rate) / 1000)
+                  
+                  if i_global < total_subs - 1:
+                      next_start_ms = to_ms(vtt[i_global+1].start)
+                      max_duration_ms = next_start_ms - start_ms - 10
+                  else:
+                      max_duration_ms = video_duration_ms - start_ms - 10 if video_duration_ms > 0 else 10000
+                  
+                  max_duration_ms = max(1000, max_duration_ms)
+                  max_duration_sec = max_duration_ms / 1000.0
+                  orig_duration_sec = get_duration(f"chunks/c_{i_global}.mp3")
+                  
+                  atempo_str = ""
+                  
+                  # CÁCH KHẮC PHỤC 2: Thêm async=1 và hậu tố S vào adelay
+                  filters.append(
+                      f"[{i_local}:a]{atempo_str}aresample={audio_rate}:async=1,adelay={delay_samples}S|{delay_samples}S[a{i_local}]"
+                  )
+                  mix_labels += f"[a{i_local}]"
+                  inputs_args.extend(["-i", f"chunks/c_{i_global}.mp3"])
+
+              num_in_batch = len(batch_vtt)
+              # Dùng code chuẩn của bạn: volume=3.0 cho các mẻ tts
+              filter_str = ";".join(filters) + f";{mix_labels}amix=inputs={num_in_batch}:normalize=0:dropout_transition=0,asetpts=PTS-STARTPTS,volume=2.5[out]"
+
+              with open(f"audio_filter_b{b}.txt", "w") as f:
+                  f.write(filter_str)
+
+              out_batch = f"batch_{b}.m4a"
+              print(f"[*] Rendering Batch {b} ({num_in_batch} subs)...")
+              cmd = ["ffmpeg", "-y"] + inputs_args +["-filter_complex_script", f"audio_filter_b{b}.txt", "-map", "[out]", "-c:a", "aac", "-ar", str(audio_rate), "-b:a", "128k", out_batch]
+              subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+          # BƯỚC 2: TẠO SCRIPT MIX CUỐI CÙNG (GIỮ NGUYÊN CODE CHUẨN)
+          with open("final_mix.txt", "w") as f:
+              # CÁCH KHẮC PHỤC 3: Ép Audio gốc đồng bộ (async) với trục thời gian thực trước khi trộn
+              f.write(f"[0:a]aresample={audio_rate}:async=1,asetpts=PTS-STARTPTS,volume=0.4[bg];")
+              
+              if num_batches > 1:
+                  batch_labels = "".join([f"[{i+1}:a]" for i in range(num_batches)])
+                  f.write(f"{batch_labels}amix=inputs={num_batches}:normalize=0:dropout_transition=0,asetpts=PTS-STARTPTS[all_tts];")
+                  f.write(f"[bg][all_tts]amix=inputs=2:normalize=0:duration=first[out_audio]")
+              else:
+                  f.write(f"[bg][1:a]amix=inputs=2:normalize=0:duration=first[out_audio]")
+
+          with open("num_batches.txt", "w") as f:
+              f.write(str(num_batches))
+          EOF
+
+      - name: Render Final Video & HLS (Stream Copy)
+        run: |
+          NUM_BATCHES=$(cat num_batches.txt)
+          
+          # Input 0: Raw video
+          printf -- "-i\nraw_video.mp4\n" > ffmpeg_inputs.txt
+          
+          # Input 1 trở đi: Các track âm thanh đã trộn theo từng mẻ
+          for ((i=0; i<NUM_BATCHES; i++)); do
+            printf -- "-i\nbatch_$i.m4a\n" >> ffmpeg_inputs.txt
+          done
+          
+          ffmpeg -y $(cat ffmpeg_inputs.txt) -filter_complex_script final_mix.txt \
+            -map 0:v -map "[out_audio]" \
+            -c:v copy \
+            -c:a aac -ar ${{ env.audio_rate }} -b:a 128k final.mp4
+          
+          mkdir -p output
+          ffmpeg -i final.mp4 -c copy -f hls \
+            -hls_time 5 -hls_list_size 0 -start_number 10001 -hls_playlist_type vod \
+            -hls_segment_type fmp4 \
+            -hls_fmp4_init_filename "${{ github.event.inputs.slug }}-index.png" \
+            -hls_segment_filename "output/${{ github.event.inputs.slug }}-index%d.png" \
+            "output/${{ github.event.inputs.slug }}.m3u8"
+
+      - name: Deploy to Cloudflare Pages (first)
+        id: deploy1
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ github.event.inputs.token }}
+          accountId: ${{ github.event.inputs.account }}
+          projectName: ${{ github.event.inputs.page }}
+          directory: ./output
+          branch: ${{ github.event.inputs.slug }}
+
+      - name: Verify Cloudflare deployment (branch domain check)
+        id: verify
+        continue-on-error: true
+        env:
+          PROJECT: ${{ github.event.inputs.page }}
+          BRANCH: ${{ github.event.inputs.slug }}
+        run: |
+          set -e
+          FILE_URL="https://${{ github.event.inputs.slug }}.${{ github.event.inputs.page }}.pages.dev/${{ github.event.inputs.slug }}.m3u8"
+
+          echo "[TARGET] $FILE_URL"
+
+          check () {
+            code=$(curl -L -o /dev/null -s -w "%{http_code}" "$FILE_URL")
+            echo "HTTP CODE: $code"
+            [ "$code" = "200" ]
+          }
+
+          echo "[WAIT] Waiting 1 minutes for Pages propagation..."
+          sleep 60
+
+          echo "[CHECK #1]"
+          if check; then
+            echo "[SUCCESS] File exists"
+            curl -G "https://cp.ssplay.net/vicdn.php" \
+            --data-urlencode "type=ok2" \
+            --data-urlencode "key=${{ github.event.inputs.page }}" \
+            --data-urlencode "slug=${{ github.event.inputs.slug }}"
+            exit 0
+          fi
+
+          echo "[WAIT] Still not found, wait extra 3 minutes..."
+          sleep 180
+
+          echo "[CHECK #2]"
+          if check; then
+            echo "[SUCCESS] File exists after delay"
+            exit 0
+          fi
+
+          echo "[FAIL] File still missing → mark for redeploy"
+          echo "NEED_REDEPLOY=true" >> $GITHUB_ENV
+          exit 1
+
+      - name: Deploy to Cloudflare Pages (retry – reuse encoded files)
+        if: env.NEED_REDEPLOY == 'true'
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ github.event.inputs.token }}
+          accountId: ${{ github.event.inputs.account }}
+          projectName: ${{ github.event.inputs.page }}
+          directory: ./output
+          branch: ${{ github.event.inputs.slug }}
