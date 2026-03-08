@@ -132,7 +132,7 @@ jobs:
                   start_ms = to_ms(c.start)
                   
                   # CÁCH KHẮC PHỤC 1: Đổi delay từ mili-giây sang Samples (Mẫu)
-                  delay_samples = int(((start_ms + 400) * audio_rate) / 1000)
+                  delay_samples = int(((start_ms + 500) * audio_rate) / 1000)
                   
                   if i_global < total_subs - 1:
                       next_start_ms = to_ms(vtt[i_global+1].start)
