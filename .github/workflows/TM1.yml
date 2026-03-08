@@ -63,7 +63,7 @@ jobs:
                       tts_text = normalize_for_tts(text)
                       if not tts_text or tts_text == ".":
                           raise Exception("Empty text")
-                      tts = edge_tts.Communicate(tts_text, voice="vi-VN-HoaiMyNeural", rate="+27%")
+                      tts = edge_tts.Communicate(tts_text, voice="vi-VN-HoaiMyNeural", rate="+26%")
                       await tts.save(out)
                       # Trim silence - Quan trọng để không bị lệch timeline
                       tmp_out = out + ".tmp.mp3"
