@@ -155,7 +155,7 @@ jobs:
 
               num_in_batch = len(batch_vtt)
               # Dùng code chuẩn của bạn: volume=3.0 cho các mẻ tts
-              filter_str = ";".join(filters) + f";{mix_labels}amix=inputs={num_in_batch}:normalize=0:dropout_transition=0,asetpts=PTS-STARTPTS,volume=2.0[out]"
+              filter_str = ";".join(filters) + f";{mix_labels}amix=inputs={num_in_batch}:normalize=0:dropout_transition=0,asetpts=PTS-STARTPTS,volume=1.5[out]"
 
               with open(f"audio_filter_b{b}.txt", "w") as f:
                   f.write(filter_str)
@@ -168,7 +168,7 @@ jobs:
           # BƯỚC 2: TẠO SCRIPT MIX CUỐI CÙNG (GIỮ NGUYÊN CODE CHUẨN)
           with open("final_mix.txt", "w") as f:
               # CÁCH KHẮC PHỤC 3: Ép Audio gốc đồng bộ (async) với trục thời gian thực trước khi trộn
-              f.write(f"[0:a]aresample={audio_rate}:async=1,asetpts=PTS-STARTPTS,volume=0.5[bg];")
+              f.write(f"[0:a]aresample={audio_rate}:async=1,asetpts=PTS-STARTPTS,volume=0.9[bg];")
               
               if num_batches > 1:
                   batch_labels = "".join([f"[{i+1}:a]" for i in range(num_batches)])
