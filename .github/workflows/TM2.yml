@@ -241,7 +241,7 @@ jobs:
           if check; then
             echo "[SUCCESS] File exists"
             curl -G "https://cp.ssplay.net/vicdn.php" \
-            --data-urlencode "type=ok1" \
+            --data-urlencode "type=ok2" \
             --data-urlencode "key=${{ github.event.inputs.page }}" \
             --data-urlencode "slug=${{ github.event.inputs.slug }}"
             exit 0
