@@ -136,9 +136,9 @@ jobs:
                   
                   if i_global < total_subs - 1:
                       next_start_ms = to_ms(vtt[i_global+1].start)
-                      max_duration_ms = next_start_ms - start_ms - 10
+                      max_duration_ms = next_start_ms - start_ms + 100
                   else:
-                      max_duration_ms = video_duration_ms - start_ms - 10 if video_duration_ms > 0 else 10000
+                      max_duration_ms = video_duration_ms - start_ms + 100 if video_duration_ms > 0 else 10000
                   
                   max_duration_ms = max(1000, max_duration_ms)
                   max_duration_sec = max_duration_ms / 1000.0
