@@ -155,7 +155,7 @@ jobs:
 
               num_in_batch = len(batch_vtt)
               # Dùng code chuẩn của bạn: volume=3.0 cho các mẻ tts
-              filter_str = ";".join(filters) + f";{mix_labels}amix=inputs={num_in_batch}:normalize=0:dropout_transition=0,asetpts=PTS-STARTPTS,volume=1.2[out]"
+              filter_str = ";".join(filters) + f";{mix_labels}amix=inputs={num_in_batch}:normalize=0:dropout_transition=0,asetpts=PTS-STARTPTS,volume=1.5[out]"
 
               with open(f"audio_filter_b{b}.txt", "w") as f:
                   f.write(filter_str)
