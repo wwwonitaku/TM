@@ -50,6 +50,7 @@ jobs:
           def normalize_for_tts(text):
               text = text.lower()
               text = re.sub(r'<[^>]+>', '', text)
+              text = re.sub(r'\b([a-zà-ỹđ])-\1', r'\1', text)
               text = re.sub(r'\s+', ' ', text).strip()
               text = text.replace('"', '')
               text = text.replace('[', '')
