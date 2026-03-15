@@ -1,4 +1,4 @@
-name: Thuyết Minh (Nữ)
+name: Thuyết Minh (Nam)
 on:
   workflow_dispatch:
     inputs:
