@@ -169,7 +169,7 @@ jobs:
           # BƯỚC 2: TẠO SCRIPT MIX CUỐI CÙNG (GIỮ NGUYÊN CODE CHUẨN)
           with open("final_mix.txt", "w") as f:
               # CÁCH KHẮC PHỤC 3: Ép Audio gốc đồng bộ (async) với trục thời gian thực trước khi trộn
-              f.write(f"[0:a]aresample={audio_rate}:async=1,asetpts=PTS-STARTPTS,volume=0.9[bg];")
+              f.write(f"[0:a]loudnorm=I=-16:TP=-1.5:LRA=11,aresample={audio_rate}:async=1,asetpts=PTS-STARTPTS[bg];")
               
               if num_batches > 1:
                   batch_labels = "".join([f"[{i+1}:a]" for i in range(num_batches)])
