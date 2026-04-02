@@ -46,7 +46,7 @@ jobs:
         run: |
           python3 <<'EOF'
           import webvtt, os, re, asyncio, edge_tts, subprocess
-          MAX_CONCURRENT_TTS = 5
+          MAX_CONCURRENT_TTS = 3
           def normalize_for_tts(text):
               text = text.lower()
               text = re.sub(r'<[^>]+>', '', text)
