@@ -72,7 +72,7 @@ jobs:
                       # Thử lại tối đa 2 lần nếu lỗi mạng
                       for attempt in range(2):
                           try:
-                              tts = edge_tts.Communicate(tts_text, voice="vi-VN-NamMinhNeural", rate="+28%")
+                              tts = edge_tts.Communicate(tts_text, voice="vi-VN-NamMinhNeural", rate="+27%")
                               await tts.save(out)
                               if os.path.exists(out) and os.path.getsize(out) > 0:
                                   break
