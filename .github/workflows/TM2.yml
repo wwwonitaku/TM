@@ -45,48 +45,70 @@ jobs:
       - name: TTS Generation (From Downloaded Sub)
         run: |
           python3 <<'EOF'
-          import webvtt, os, re, asyncio, edge_tts, subprocess
+          import webvtt, os, re, asyncio, edge_tts, subprocess, sys
+
           MAX_CONCURRENT_TTS = 3
+          ERROR_THRESHOLD = 5  # Ngưỡng lỗi để dừng workflow
+          failed_count = 0
+
           def normalize_for_tts(text):
               text = text.lower()
               text = re.sub(r'<[^>]+>', '', text)
               text = re.sub(r'\b([a-zà-ỹđ])-\1', r'\1', text)
               text = re.sub(r'\s+', ' ', text).strip()
-              text = text.replace('"', '')
-              text = text.replace('[', '')
-              text = text.replace(']', '')
+              text = text.replace('"', '').replace('[', '').replace(']', '')
               text = text.replace(",", ", ").replace(".", ". ")
               if not text.endswith((".", "!", "?", "...")): text += "."
               return text
+
           async def generate_tts(text, out, idx, semaphore):
+              global failed_count
               async with semaphore:
                   try:
                       tts_text = normalize_for_tts(text)
                       if not tts_text or tts_text == ".":
                           raise Exception("Empty text")
-                      tts = edge_tts.Communicate(tts_text, voice="vi-VN-NamMinhNeural", rate="+28%")
-                      await tts.save(out)
-                      # Trim silence - Quan trọng để không bị lệch timeline
+                      
+                      # Thử lại tối đa 2 lần nếu lỗi mạng
+                      for attempt in range(2):
+                          try:
+                              tts = edge_tts.Communicate(tts_text, voice="vi-VN-NamMinhNeural", rate="+28%")
+                              await tts.save(out)
+                              if os.path.exists(out) and os.path.getsize(out) > 0:
+                                  break
+                          except:
+                              if attempt == 1: raise
+                              await asyncio.sleep(1)
+
+                      # Trim silence
                       tmp_out = out + ".tmp.mp3"
                       subprocess.run(["ffmpeg", "-y", "-i", out, "-af", "silenceremove=start_periods=1:start_duration=0:start_threshold=-50dB:stop_periods=0:stop_threshold=-50dB:stop_duration=0", tmp_out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                       os.rename(tmp_out, out)
-                  except:
+                  except Exception as e:
+                      failed_count += 1
+                      print(f"Lỗi đoạn {idx}: {e}")
+                      # Tạo file trắng để các bước sau không bị lỗi crash ffmpeg
                       subprocess.run(["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=24000:cl=mono","-t","0.1",out], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
           async def main():
-            if not os.path.exists("vi.vtt"):
-                print("Missing vi.vtt"); return
-           
-            vtt = webvtt.read("vi.vtt")
-            os.makedirs("chunks", exist_ok=True)
-            semaphore = asyncio.Semaphore(MAX_CONCURRENT_TTS)
-            tasks =[]
-           
-            for i, c in enumerate(vtt):
-                tasks.append(generate_tts(c.text, f"chunks/c_{i}.mp3", i, semaphore))
-           
-            await asyncio.gather(*tasks)
-            with open("count.txt", "w") as f: f.write(str(len(vtt)))
-            print(f"[DONE] Generated {len(vtt)} TTS chunks")
+              if not os.path.exists("vi.vtt"):
+                  print("Missing vi.vtt"); return
+              
+              vtt = webvtt.read("vi.vtt")
+              os.makedirs("chunks", exist_ok=True)
+              semaphore = asyncio.Semaphore(MAX_CONCURRENT_TTS)
+              
+              tasks = [generate_tts(c.text, f"chunks/c_{i}.mp3", i, semaphore) for i, c in enumerate(vtt)]
+              await asyncio.gather(*tasks)
+
+              print(f"Tổng số đoạn lỗi: {failed_count}")
+              if failed_count > ERROR_THRESHOLD:
+                  print(f"Phát hiện {failed_count} đoạn lỗi (vượt ngưỡng {ERROR_THRESHOLD}). Dừng Workflow!")
+                  sys.exit(1) # Lệnh này sẽ làm GitHub Action báo đỏ và dừng lại
+
+              with open("count.txt", "w") as f: f.write(str(len(vtt)))
+              print(f"[DONE] Generated {len(vtt)} TTS chunks")
+
           asyncio.run(main())
           EOF
       - name: Build Audio Batches & Filter (Chia nhỏ 300 sub/lần)
