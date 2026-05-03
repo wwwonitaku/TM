@@ -30,7 +30,7 @@ jobs:
             "${{ github.event.inputs.link }}"
          
           # Tải phụ đề Việt
-          curl -L "https://vicdn.cc/vtt/${{ github.event.inputs.slug }}-vi.vtt" -o vi.vtt
+          curl -L -A "MySecretAgent_ViCDN_cc" "https://vicdn.cc/vtt/${{ github.event.inputs.slug }}-vi.vtt" -o vi.vtt
       - name: Filter Music from Subtitle
         run: |
           python3 -c '
