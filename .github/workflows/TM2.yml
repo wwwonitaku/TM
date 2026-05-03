@@ -268,7 +268,7 @@ jobs:
             --data-urlencode "key=${{ github.event.inputs.page }}" \
             --data-urlencode "slug=${{ github.event.inputs.slug }}"
             # Call API 2
-            curl -L "https://vicdn.cc/${{ github.event.inputs.slug }}?r=1"
+            curl -L -A "MySecretAgent_ViCDN_cc" "https://vicdn.cc/${{ github.event.inputs.slug }}?r=1"
             exit 0
           fi
 
